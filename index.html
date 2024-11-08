@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proctored Test Interface</title>
+    <style>
+        
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f7fa;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .button-container {
+            display: flex;
+            gap: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        #startTest {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #endTest {
+            background-color: #f44336;
+            color: white;
+            display: none;
+        }
+        #warningCount {
+            margin-top: 20px;
+            font-size: 18px;
+            color: #f44336;
+        }
+        #warningLog {
+            margin-top: 20px;
+            background-color: white;
+            border: 1px solid #ccc;
+            padding: 10px;
+            width: 300px;
+            height: 150px;
+            overflow-y: auto; /* Allow scrolling */
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .container {
+            width: 90%;
+            max-width: 1200px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            background-color: #ffffff;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+            padding: 20px;
+        }
+        .video-section, .control-section {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+            flex: 1;
+        }
+        .video-section {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 45%;
+        }
+        .video-feed {
+            width: 100%;
+            border-radius: 10px;
+            border: 2px solid #ccc;
+            background-color: #f0f0f0;
+        }
+        .control-section {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 45%;
+        }
+        .question-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .question-list button {
+            flex: 1 1 calc(25% - 10px);
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            background-color: #e9ecef;
+            cursor: pointer;
+            text-align: center;
+        }
+        .question-list button.attempted {
+            background-color: #d4edda; /* Green for attempted */
+        }
+        .question-list button.not-attempted {
+            background-color: #f8d7da; /* Red for not attempted */
+        }
+        .mcq-section, .ref-image-section {
+            margin-top: 20px;
+        }
+        .mcq-options label {
+            display: block;
+            margin: 8px 0;
+            font-size: 16px;
+        }
+        .mcq-options input[type="radio"] {
+            margin-right: 10px;
+        }
+        .controls {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .controls button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .controls button:hover {
+            background-color: #0056b3;
+        }
+        .controls #submitBtn {
+            background-color: #28a745;
+        }
+        .controls #submitBtn:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="button-container"></div>
+        <button id="startTest">Start Test</button>
+        <button id="endTest">End Test</button>
+    </div>
+    <div id="warningCount">Warnings: 0</div>
+    <div id="warningLog"></div> <!-- Warning log area -->
+    <div class="container">
+        <div class="video-section">
+            <h2>Live Camera Feed</h2>
+            <img src="{{ url_for('video_feed') }}" class="video-feed" id="videoElement" alt="Live Camera Feed">
+            <div class="ref-image-section">
+                <h3>Reference Image</h3>
+                <img id="refImageDisplay" style="width: 100%; margin-top: 10px;" alt="Reference Image">
+            </div>
+        </div>
+
+        <div class="control-section">
+            <h2>Questions</h2>
+            <div class="question-list" id="questionList"></div>
+
+            <div class="mcq-section">
+                <h3 id="questionText"></h3>
+                <div class="mcq-options" id="mcqOptions"></div>
+            </div>
+
+            <div class="controls">
+                <button id="nextQuestionBtn">Next Question</button>
+                <button id="submitBtn">Submit</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        let isTestActive = false;
+        let warningCount = 0;
+        let lastWarningTime = 0;
+        let cooldown = false;  // Flag to manage cooldown
+        let fullscreenCheckInterval;
+        let forceFullscreenInterval;
+        let recognition; // For speech recognition
+    
+        const warningDisplay = document.getElementById('warningCount');
+        const warningLog = document.getElementById('warningLog'); // Warning log element
+        const startButton = document.getElementById('startTest');
+        const endButton = document.getElementById('endTest');
+    
+        // Initialize Google Cloud Speech-to-Text API
+        function initSpeechRecognition() {
+            if ('webkitSpeechRecognition' in window) {
+                recognition = new webkitSpeechRecognition();
+                recognition.continuous = true;
+                recognition.lang = 'en-US';
+                recognition.interimResults = false;
+                recognition.onresult = (event) => {
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        if (event.results[i].isFinal) {
+                            const transcript = event.results[i][0].transcript.trim();
+                            addWarning(`Detected human voice: "${transcript}"`);
+                        }
+                    }
+                };
+                recognition.onerror = (event) => {
+                    console.error('Speech recognition error:', event.error);
+                };
+            } else {
+                console.error('Speech recognition is not supported in this browser.');
+            }
+        }
+    
+        // Function to toggle fullscreen
+        async function toggleFullscreen() {
+            const element = document.documentElement;
+            try {
+                if (isInFullscreen()) {
+                    // Exit fullscreen
+                    if (document.exitFullscreen) {
+                        await document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        await document.webkitExitFullscreen();
+                    } else if (document.msExitFullscreen) {
+                        await document.msExitFullscreen();
+                    }
+                } else {
+                    // Enter fullscreen
+                    if (element.requestFullscreen) {
+                        await element.requestFullscreen();
+                    } else if (element.webkitRequestFullscreen) {
+                        await element.webkitRequestFullscreen();
+                    } else if (element.msRequestFullscreen) {
+                        await element.msRequestFullscreen();
+                    }
+                }
+            } catch (err) {
+                console.error('Fullscreen error:', err);
+            }
+        }
+    
+        // Function to check if in fullscreen
+        function isInFullscreen() {
+            return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+        }
+    
+        // Function to add warning with detection cooldown
+        async function addWarning(reason) {
+            const now = Date.now();
+            if (now - lastWarningTime < 1000) return; // Cooldown check
+    
+            // Update last warning time and set cooldown
+            lastWarningTime = now;
+            cooldown = true;
+    
+            // Increment warning count and display
+            warningCount++;
+            warningDisplay.textContent = `Warnings: ${warningCount}`;
+    
+            // Add warning to log
+            const warningMessage = document.createElement('div');
+            warningMessage.textContent = `Warning: ${reason}`;
+            warningLog.appendChild(warningMessage);
+            warningLog.scrollTop = warningLog.scrollHeight; // Scroll to the bottom
+    
+            // Reset cooldown after 2 seconds
+            setTimeout(() => {
+                cooldown = false;
+            }, 2000);
+        }
+    
+        // Start test function
+        startButton.addEventListener('click', async () => {
+            isTestActive = true;
+            startButton.style.display = 'none';
+            endButton.style.display = 'block';
+            await toggleFullscreen(); // Enter fullscreen when the test starts
+    
+            // Start speech recognition
+            if (recognition) {
+                recognition.start();
+            }
+    
+            // Monitor fullscreen state
+            fullscreenCheckInterval = setInterval(() => {
+                if (!isInFullscreen() && isTestActive) {
+                    addWarning('Fullscreen mode exited');
+                }
+            }, 5000);
+    
+            // Re-attempt fullscreen every 2 seconds
+            forceFullscreenInterval = setInterval(async () => {
+                if (isTestActive && !isInFullscreen()) {
+                    await toggleFullscreen();
+                }
+            }, 1000);
+    
+            // Window/tab switching detection
+            window.addEventListener('blur', () => {
+                if (isTestActive && !isInFullscreen()) {
+                    addWarning('Window/Tab switched');
+                }
+            });
+    
+            // Visibility change detection
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden && isTestActive) {
+                    addWarning('Tab visibility changed');
+                }
+            });
+    
+            // Fullscreen change detection
+            document.addEventListener('fullscreenchange', () => {
+                if (!isInFullscreen() && isTestActive) {
+                    addWarning('Exited fullscreen mode');
+                }
+            });
+    
+            // Capture Escape key and other shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (isTestActive) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        addWarning('Used Escape key');
+                    }
+                    // Prevent Alt+Tab, Windows key, Alt+F4, Ctrl+W, etc.
+                    if (e.altKey || e.metaKey || e.ctrlKey || e.key === 'F11' || e.key === 'Tab') {
+                        e.preventDefault();
+                        addWarning('Used keyboard shortcut');
+                    }
+                }
+            });
+    
+            // Prevent right-click
+            document.addEventListener('contextmenu', (e) => {
+                if (isTestActive) {
+                    e.preventDefault();
+                    addWarning('Used right-click');
+                }
+            });
+        });
+    
+        // End test function
+        endButton.addEventListener('click', () => {
+            isTestActive = false;
+            startButton.style.display = 'block';
+            endButton.style.display = 'none';
+            clearInterval(fullscreenCheckInterval);
+            clearInterval(forceFullscreenInterval);
+            if (recognition) {
+                recognition.stop();
+            }
+            document.exitFullscreen().catch(() => {});
+            alert(`Test ended.\nTotal warnings: ${warningCount}`);
+        });
+    
+        // Prevent closing the window
+        window.addEventListener('beforeunload', (e) => {
+            if (isTestActive) {
+                e.preventDefault();
+                e.returnValue = '';
+                addWarning('Attempted to close window');
+                return '';
+            }
+        });
+    
+        // Initialize speech recognition on page load
+        window.addEventListener('load', () => {
+            initSpeechRecognition();
+        });
+    </script>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.4/xlsx.full.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            var questions = [
+                "What is the capital of France?", "What is 2 + 2?", "Which planet is known as the Red Planet?",
+                "What is the largest ocean on Earth?", "What element does 'O' represent on the periodic table?",
+                "Who wrote 'To Kill a Mockingbird'?", "What is the smallest prime number?", "In which year did the Titanic sink?",
+                "What is the main ingredient in guacamole?", "What is the hardest natural substance on Earth?",
+                "Who painted the Mona Lisa?", "What gas do plants primarily use for photosynthesis?", "What is the capital of Japan?",
+                "Which planet is closest to the Sun?", "What is the largest mammal in the world?", "Who developed the theory of relativity?",
+                "What is the chemical symbol for gold?", "What is the currency of the United Kingdom?"
+            ];
+
+            var mcq1 = [
+                "Paris", "4", "Mars", "Pacific Ocean", "Oxygen", "Harper Lee", "2", "1912", "Avocado", "Diamond",
+                "Leonardo da Vinci", "Carbon Dioxide", "Tokyo", "Mercury", "Blue Whale", "Albert Einstein", "Au", "Pound"
+            ];
+
+            var mcq2 = [
+                "London", "5", "Jupiter", "Atlantic Ocean", "Gold", "George Orwell", "3", "1915", "Tomato", "Gold",
+                "Vincent van Gogh", "Oxygen", "Beijing", "Venus", "Elephant", "Isaac Newton", "Ag", "Euro"
+            ];
+
+            var mcq3 = [
+                "Berlin", "6", "Saturn", "Indian Ocean", "Nitrogen", "Mark Twain", "1", "1920", "Cucumber", "Ruby",
+                "Claude Monet", "Nitrogen", "Seoul", "Earth", "Shark", "Galileo Galilei", "Pb", "Dollar"
+            ];
+
+            var mcq4 = [
+                "Madrid", "7", "Uranus", "Arctic Ocean", "Hydrogen", "F. Scott Fitzgerald", "4", "1905", "Chili", "Emerald",
+                "Pablo Picasso", "Hydrogen", "Hong Kong", "Mars", "Blue Whale", "Niels Bohr", "Zn", "Yen"
+            ];
+
+            var refImages = [
+                "https://example.com/image1.jpg", "https://example.com/image2.jpg", "https://example.com/image3.jpg",
+                "https://example.com/image4.jpg", "https://example.com/image5.jpg", "https://example.com/image6.jpg",
+                "https://example.com/image7.jpg", "https://example.com/image8.jpg", "https://example.com/image9.jpg",
+                "https://example.com/image10.jpg", "https://example.com/image11.jpg", "https://example.com/image12.jpg",
+                "https://example.com/image13.jpg", "https://example.com/image14.jpg", "https://example.com/image15.jpg",
+                "https://example.com/image16.jpg", "https://example.com/image17.jpg", "https://example.com/image18.jpg"
+            ];
+
+            var currentIndex = 0;
+            var answers = Array(questions.length).fill(null);
+            var submitted = Array(questions.length).fill(false);
+
+            function loadQuestion(index) {
+                $('#questionText').text(questions[index]);
+                $('#mcqOptions').html(
+                    '<label><input type="radio" name="mcqOption" value="' + mcq1[index] + '">' + mcq1[index] + '</label>' +
+                    '<label><input type="radio" name="mcqOption" value="' + mcq2[index] + '">' + mcq2[index] + '</label>' +
+                    '<label><input type="radio" name="mcqOption" value="' + mcq3[index] + '">' + mcq3[index] + '</label>' +
+                    '<label><input type="radio" name="mcqOption" value="' + mcq4[index] + '">' + mcq4[index] + '</label>'
+                );
+               
+                // Mark the current question as attempted
+                $('input[name="mcqOption"]').change(function() {
+                    answers[currentIndex] = $(this).val();
+                    submitted[currentIndex] = true;
+                    updateQuestionList();
+                });
+            }
+
+            function updateQuestionList() {
+                $('#questionList').empty();
+                questions.forEach((question, index) => {
+                    $('#questionList').append(
+                        '<button class="' + (submitted[index] ? 'attempted' : 'not-attempted') + '" ' +
+                        'data-index="' + index + '">' +
+                        'Q' + (index + 1) + '</button>'
+                    );
+                });
+
+                // Attach click event to question buttons
+                $('#questionList button').click(function() {
+                    var index = $(this).data('index');
+                    currentIndex = index;
+                    loadQuestion(index);
+                    setRefImage(index);
+                });
+            }
+
+            function setRefImage(index) {
+                $('#refImageDisplay').attr('src', refImages[index]);
+            }
+
+            $('#nextQuestionBtn').click(function() {
+                currentIndex = (currentIndex + 1) % questions.length;
+                loadQuestion(currentIndex);
+                setRefImage(currentIndex);
+            });
+
+            $('#submitBtn').click(function() {
+                var results = questions.map((question, index) => {
+                    var answer = answers[index] || "Not answered";
+                    return question + " - " + answer;
+                }).join("\n");
+                alert(results);
+            });
+
+            // Initialize
+            loadQuestion(currentIndex);
+            updateQuestionList();
+            setRefImage(currentIndex);
+        });
+    </script>
+</body>
+</html>
